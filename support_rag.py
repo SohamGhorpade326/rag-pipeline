@@ -25,7 +25,7 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 GROQ_MODEL = os.getenv(
     "GROQ_MODEL",
-    "llama-3.1-8b-instant"
+    "llama-3.3-70b-versatile"
 )
 
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -192,27 +192,93 @@ def generate_with_ollama(messages: list[dict]) -> str:
     return result.get("message", {}).get("content", "").strip()
 
 
+# Preferred fallbacks, in order, if the configured model is unavailable.
+GROQ_FALLBACK_MODELS = [
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-20b",
+    "openai/gpt-oss-120b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "qwen/qwen3-32b",
+]
+
+# Non-chat model families to skip when auto-selecting.
+NON_CHAT_MARKERS = ("whisper", "guard", "tts", "playai", "orpheus", "compound")
+
+
+def pick_available_groq_model() -> str:
+    """
+    Query Groq for the models this API key can use and pick a chat model.
+    """
+
+    response = requests.get(
+        "https://api.groq.com/openai/v1/models",
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        timeout=30
+    )
+
+    response.raise_for_status()
+
+    available = [
+        model["id"]
+        for model in response.json().get("data", [])
+        if model.get("active", True)
+    ]
+
+    logger.info("Groq models available: %s", ", ".join(available))
+
+    for candidate in GROQ_FALLBACK_MODELS:
+        if candidate in available:
+            return candidate
+
+    for candidate in available:
+        if not any(marker in candidate.lower() for marker in NON_CHAT_MARKERS):
+            return candidate
+
+    raise RuntimeError("No usable Groq chat model is available.")
+
+
+def call_groq(messages: list[dict], model: str) -> requests.Response:
+    """
+    Make a single chat-completions request to Groq.
+    """
+
+    return requests.post(
+        GROQ_API_URL,
+        json={
+            "model": model,
+            "messages": messages,
+            "temperature": 0
+        },
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        timeout=60
+    )
+
+
 def generate_with_groq(messages: list[dict]) -> str:
     """
     Send messages to the hosted Groq API (OpenAI-compatible)
-    and return its response.
+    and return its response. Falls back to an available model
+    if the configured one has been retired.
     """
+
+    global GROQ_MODEL
 
     if not GROQ_API_KEY:
         raise RuntimeError("GROQ_API_KEY is not set.")
 
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": messages,
-        "temperature": 0
-    }
+    response = call_groq(messages, GROQ_MODEL)
 
-    response = requests.post(
-        GROQ_API_URL,
-        json=payload,
-        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
-        timeout=60
-    )
+    if response.status_code == 404 and "model_not_found" in response.text:
+        fallback = pick_available_groq_model()
+
+        logger.warning(
+            "Groq model %s unavailable; switching to %s",
+            GROQ_MODEL,
+            fallback
+        )
+
+        GROQ_MODEL = fallback
+        response = call_groq(messages, GROQ_MODEL)
 
     if not response.ok:
         logger.error(
@@ -227,7 +293,13 @@ def generate_with_groq(messages: list[dict]) -> str:
 
     choices = result.get("choices") or [{}]
 
-    return choices[0].get("message", {}).get("content", "").strip()
+    content = choices[0].get("message", {}).get("content") or ""
+
+    # Strip any <think>...</think> reasoning block from reasoning models.
+    if "</think>" in content:
+        content = content.split("</think>", 1)[1]
+
+    return content.strip()
 
 
 def generate_answer(question: str, context: str) -> str:
