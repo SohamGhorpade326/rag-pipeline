@@ -214,6 +214,13 @@ def generate_with_groq(messages: list[dict]) -> str:
         timeout=60
     )
 
+    if not response.ok:
+        logger.error(
+            "Groq API error | status=%s | body=%s",
+            response.status_code,
+            response.text[:500]
+        )
+
     response.raise_for_status()
 
     result = response.json()

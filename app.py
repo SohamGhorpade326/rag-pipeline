@@ -11,6 +11,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 
+import support_rag
 from support_rag import answer_question
 
 
@@ -108,7 +109,14 @@ def health_check():
 
     return {
         "status": "healthy",
-        "service": "Customer Support RAG API"
+        "service": "Customer Support RAG API",
+        "llm_provider": support_rag.LLM_PROVIDER,
+        "llm_model": (
+            support_rag.GROQ_MODEL
+            if support_rag.LLM_PROVIDER == "groq"
+            else support_rag.OLLAMA_MODEL
+        ),
+        "groq_api_key_set": bool(support_rag.GROQ_API_KEY)
     }
 
 
