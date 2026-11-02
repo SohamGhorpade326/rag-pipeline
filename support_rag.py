@@ -18,6 +18,28 @@ OLLAMA_MODEL = os.getenv(
     "qwen2.5:0.5b"
 )
 
+# LLM backend: "ollama" (local) or "groq" (hosted, for cloud deploys).
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+
+GROQ_MODEL = os.getenv(
+    "GROQ_MODEL",
+    "llama-3.1-8b-instant"
+)
+
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+SYSTEM_PROMPT = (
+    "You are a customer support assistant. "
+    "Answer questions using ONLY the supplied "
+    "knowledge-base context. "
+    "If the context does not contain the answer, "
+    "say: Insufficient information in the "
+    "knowledge base to answer this question. "
+    "Do not invent policies, prices, or facts."
+)
+
 # Sample customer support knowledge base.
 # Replace these records with your Experiment 5/6 documents
 # when integrating your existing RAG pipeline.
@@ -120,38 +142,37 @@ def retrieve_documents(question: str, top_k: int = 3):
     ]
 
 
-def generate_answer(question: str, context: str) -> str:
+def build_messages(question: str, context: str) -> list[dict]:
     """
-    Send the retrieved context and question to the local
-    Ollama LLM and return its response.
+    Build the chat messages shared by all LLM providers.
+    """
+
+    return [
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Knowledge-base context:\n{context}\n\n"
+                f"Customer question: {question}\n\n"
+                "Give a clear and concise answer."
+            )
+        }
+    ]
+
+
+def generate_with_ollama(messages: list[dict]) -> str:
+    """
+    Send messages to the local Ollama LLM and return its response.
     """
 
     url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/chat"
 
     payload = {
         "model": OLLAMA_MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a customer support assistant. "
-                    "Answer questions using ONLY the supplied "
-                    "knowledge-base context. "
-                    "If the context does not contain the answer, "
-                    "say: Insufficient information in the "
-                    "knowledge base to answer this question. "
-                    "Do not invent policies, prices, or facts."
-                )
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Knowledge-base context:\n{context}\n\n"
-                    f"Customer question: {question}\n\n"
-                    "Give a clear and concise answer."
-                )
-            }
-        ],
+        "messages": messages,
         "stream": False,
         "options": {
             "temperature": 0
@@ -168,7 +189,52 @@ def generate_answer(question: str, context: str) -> str:
 
     result = response.json()
 
-    answer = result.get("message", {}).get("content", "").strip()
+    return result.get("message", {}).get("content", "").strip()
+
+
+def generate_with_groq(messages: list[dict]) -> str:
+    """
+    Send messages to the hosted Groq API (OpenAI-compatible)
+    and return its response.
+    """
+
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY is not set.")
+
+    payload = {
+        "model": GROQ_MODEL,
+        "messages": messages,
+        "temperature": 0
+    }
+
+    response = requests.post(
+        GROQ_API_URL,
+        json=payload,
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+        timeout=60
+    )
+
+    response.raise_for_status()
+
+    result = response.json()
+
+    choices = result.get("choices") or [{}]
+
+    return choices[0].get("message", {}).get("content", "").strip()
+
+
+def generate_answer(question: str, context: str) -> str:
+    """
+    Send the retrieved context and question to the configured
+    LLM provider and return its response.
+    """
+
+    messages = build_messages(question, context)
+
+    if LLM_PROVIDER == "groq":
+        answer = generate_with_groq(messages)
+    else:
+        answer = generate_with_ollama(messages)
 
     if not answer:
         raise RuntimeError("The LLM returned an empty response.")

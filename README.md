@@ -1,16 +1,12 @@
----
-title: Customer Support RAG API
-emoji: 🤖
-colorFrom: indigo
-colorTo: purple
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Customer Support RAG API
 
-FastAPI + Retrieval-Augmented Generation using a local Ollama model (`qwen2.5:0.5b`).
+FastAPI + Retrieval-Augmented Generation. Uses a local Ollama model (`qwen2.5:0.5b`) in development and the hosted Groq API (`llama-3.1-8b-instant`) when deployed.
+
+## Deploy on Render (free)
+
+1. Get a free API key at https://console.groq.com/keys
+2. Render dashboard → **New → Blueprint** → select this repo (uses `render.yaml`).
+3. Paste your `GROQ_API_KEY` when prompted → **Apply**.
 
 ## Endpoints
 
@@ -50,6 +46,9 @@ docker run -p 7860:7860 support-rag
 
 | Variable              | Default                  |
 |-----------------------|--------------------------|
+| `LLM_PROVIDER`        | `ollama` (or `groq`)     |
+| `GROQ_API_KEY`        | *(required for groq)*    |
+| `GROQ_MODEL`          | `llama-3.1-8b-instant`   |
 | `OLLAMA_BASE_URL`     | `http://localhost:11434` |
 | `OLLAMA_MODEL`        | `qwen2.5:0.5b`           |
 | `MAX_QUESTION_LENGTH` | `1000`                   |
